@@ -1,0 +1,6 @@
+# handlers/main.yml
+- name: Restart Consul
+  ansible.builtin.systemd:
+    name: consul
+    state: restarted
+

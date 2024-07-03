@@ -1,0 +1,90 @@
+# tasks/main.yml
+- name: Ensure Consul user and group exist
+  ansible.builtin.group:
+    name: "{{ consul_group }}"
+    state: present
+
+- name: Ensure Consul user exists
+  ansible.builtin.user:
+    name: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    createhome: no
+    shell: /sbin/nologin
+
+- name: Install dependencies
+  ansible.builtin.package:
+    name: "{{ item }}"
+  with_items:
+    - unzip
+    - curl
+    - jq
+  when: ansible_os_family == "RedHat" or ansible_os_family == "Debian"
+
+- name: Download Consul
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/consul/{{ consul_version }}/consul_{{ consul_version }}_linux_amd64.zip"
+    dest: "/tmp/consul.zip"
+    mode: '0644'
+
+- name: Unzip Consul binary
+  ansible.builtin.unarchive:
+    src: "/tmp/consul.zip"
+    dest: "/usr/local/bin/"
+    remote_src: yes
+
+- name: Ensure Consul binary is executable
+  ansible.builtin.file:
+    path: "/usr/local/bin/consul"
+    mode: '0755'
+    state: file
+
+- name: Create Consul directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: '0755'
+  with_items:
+    - "{{ consul_data_dir }}"
+    - "{{ consul_config_dir }}"
+
+- name: Deploy Consul configuration
+  ansible.builtin.template:
+    src: "consul.hcl.j2"
+    dest: "{{ consul_config_dir }}/consul.hcl"
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: '0644'
+
+- name: Create Consul systemd service file
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Consul Agent
+      Documentation=https://www.consul.io/
+      Requires=network-online.target
+      After=network-online.target
+
+      [Service]
+      User={{ consul_user }}
+      Group={{ consul_group }}
+      ExecStart=/usr/local/bin/consul agent -config-dir={{ consul_config_dir }}
+      ExecReload=/bin/kill -HUP $MAINPID
+      Restart=on-failure
+      LimitNOFILE=65536
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/consul.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable and start Consul service
+  ansible.builtin.systemd:
+    name: consul
+    enabled: yes
+    state: started
+  notify: Restart Consul
+
